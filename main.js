@@ -67,6 +67,8 @@ async function findRoomByCode(code) {
     .select("*")
     .eq("room_code", roomCode)
     .maybeSingle();
+  
+console.log("findRoomByCode:", { roomCode, data, error });
 
   if (error) throw error;
   if (!data) throw new Error("找不到此房號");
