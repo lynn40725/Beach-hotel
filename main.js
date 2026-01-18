@@ -1,9 +1,9 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "YOUR_SUPABASE_PROJECT_URL";
-const SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_PUBLIC_KEY";
+const SUPABASE_URL = "https://cebdwvvnfnlhpbbqcirt.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_9omkoai3Xn4MYhDxTurlqw_psOQeM0f";
 
-const supabase = createClient(https://cebtdwvnfnhlbpbqcirt.supabase.co, sb_publishable_9omkoai3Xn4MYhDxTurlqw_ps0QeM0f);
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const el = (id) => document.getElementById(id);
 const logEl = el("log");
