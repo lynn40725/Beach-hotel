@@ -1,49 +1,70 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const SUPABASE_URL = "https://cebtdwvnfnhlbpbqcirt.supabase.co" ;
-const SUPABASE_ANON_KEY = "sb_publishable_9omkoai3Xn4MYhDxTurlqw_ps0QeM0f" ;
+// ====== 你的 Supabase 連線資訊 ======
+const SUPABASE_URL = "https://cebtdwvnfnhlbpbqcirt.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_9omkoai3Xn4MYhDxTurlqw_ps0QeM0f";
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-console.log("SUPABASE_URL =", SUPABASE_URL);
+
+// ====== DOM helpers ======
 const el = (id) => document.getElementById(id);
 const logEl = el("log");
 
 function log(...args) {
-  const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ");
+  const msg = args
+    .map((a) => (typeof a === "string" ? a : JSON.stringify(a, null, 2)))
+    .join(" ");
   logEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + logEl.textContent;
 }
 
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+// ====== App state ======
 let sessionUser = null;
 let currentRoom = null;
 let playersChannel = null;
 
 // ---------- Auth ----------
 async function ensureSignedIn() {
-  const { data } = await supabase.auth.getUser();
-  if (data?.user) {
-    sessionUser = data.user;
+  // 先讀現有 session
+  const { data: userData, error: getUserErr } = await supabase.auth.getUser();
+  if (getUserErr) throw getUserErr;
+
+  if (userData?.user) {
+    sessionUser = userData.user;
     el("authStatus").textContent = `已登入（匿名）: ${sessionUser.id.slice(0, 8)}…`;
     return sessionUser;
   }
 
+  // 沒有就匿名登入
   const { data: signInData, error } = await supabase.auth.signInAnonymously();
   if (error) throw error;
+
   sessionUser = signInData.user;
   el("authStatus").textContent = `已登入（匿名）: ${sessionUser.id.slice(0, 8)}…`;
   return sessionUser;
 }
 
-el("btnSignIn").addEventListener("click", async () => {
+el("btnSignIn")?.addEventListener("click", async () => {
   try {
     await ensureSignedIn();
     log("匿名登入成功");
   } catch (e) {
-    log("匿名登入失敗：", e.message);
+    log("匿名登入失敗：", e?.message || String(e));
   }
 });
 
 // ---------- Room ----------
 async function createRoom(targetDeadCards) {
   await ensureSignedIn();
+
   const { data, error } = await supabase
     .from("rooms")
     .insert({
@@ -60,6 +81,7 @@ async function createRoom(targetDeadCards) {
 
 async function findRoomByCode(code) {
   await ensureSignedIn();
+
   const roomCode = code.trim().toUpperCase();
 
   const { data, error } = await supabase
@@ -67,8 +89,6 @@ async function findRoomByCode(code) {
     .select("*")
     .eq("room_code", roomCode)
     .maybeSingle();
-  
-console.log("findRoomByCode:", { roomCode, data, error });
 
   if (error) throw error;
   if (!data) throw new Error("找不到此房號");
@@ -80,6 +100,7 @@ function renderRoomInfo() {
     el("roomInfo").textContent = "尚未進入房間";
     return;
   }
+
   el("roomInfo").textContent =
     `room_code=${currentRoom.room_code}\n` +
     `room_id=${currentRoom.id}\n` +
@@ -103,44 +124,25 @@ async function getOrCreatePlayer(roomId, name, job, personality) {
   if (e1) throw e1;
   if (existing) return existing;
 
-  // 取得目前最大 turn_order
-  const { data: rows, error: e2 } = await supabase
-    .from("players")
-    .select("turn_order")
-    .eq("room_id", roomId)
-    .order("turn_order", { ascending: false })
-    .limit(1);
+  // ✅ turn_order、滿房判定全部交給資料庫 RPC（避免競態）
+  const { data: inserted, error: e2 } = await supabase.rpc("join_room_player", {
+    p_room_id: roomId,
+    p_user_id: sessionUser.id,
+    p_name: name,
+    p_job: job,
+    p_personality: personality
+  });
 
-  if (e2) throw e2;
-
-  const maxOrder = rows?.length ? rows[0].turn_order : -1;
-  const nextOrder = maxOrder + 1;
-
-  if (nextOrder >= 6) {
-    throw new Error("房間已滿（最多 6 人）");
+  if (e2) {
+    console.error("join_room_player failed:", e2);
+    throw new Error(`加入失敗：${e2.message}`);
   }
-if (!sessionUser?.id) {
-  const { data: { user }, error } = await supabase.auth.getUser();
-  if (error) throw error;
-  if (!user) throw new Error("匿名登入尚未完成，請重整後再試");
-  sessionUser = user; // 若 sessionUser 是 const，就改用 currentUser 變數
-}
-  const { data: inserted, error: e3 } = await supabase.rpc("join_room_player", {
 
-  p_room_id: roomId,
-  p_user_id: sessionUser.id,
-  p_name: name,
-  p_job: job,
-  p_personality: personality
-});
+  if (!inserted) {
+    throw new Error("加入失敗：未取得玩家資料（RPC 回傳空值）");
+  }
 
-if (e3) {
-  console.error("join_room_player failed:", e3);
-  throw new Error(`加入失敗：${e3.message}`);
-}
-
-return inserted;
-
+  return inserted;
 }
 
 function renderPlayers(players) {
@@ -168,15 +170,6 @@ function renderPlayers(players) {
   }
 }
 
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 // Realtime subscribe players of room
 async function subscribePlayers(roomId) {
   if (playersChannel) {
@@ -200,7 +193,6 @@ async function subscribePlayers(roomId) {
       "postgres_changes",
       { event: "*", schema: "public", table: "players", filter: `room_id=eq.${roomId}` },
       async () => {
-        // 有變更就重新拉一次（最穩、也最簡單）
         const { data: latest, error: e } = await supabase
           .from("players")
           .select("*")
@@ -216,7 +208,7 @@ async function subscribePlayers(roomId) {
 }
 
 // ---------- UI wiring ----------
-el("btnCreateRoom").addEventListener("click", async () => {
+el("btnCreateRoom")?.addEventListener("click", async () => {
   try {
     const targetDeadCards = Number(el("createTargetDead").value || 8);
     const room = await createRoom(targetDeadCards);
@@ -224,14 +216,14 @@ el("btnCreateRoom").addEventListener("click", async () => {
     renderRoomInfo();
     log("建立房間成功，房號：", room.room_code);
 
-    // 建房後你通常會立刻加入（也可以讓它先等朋友）
+    // 建房後通常會讓房號自動帶入加入欄位
     el("joinCode").value = room.room_code;
   } catch (e) {
-    log("建立房間失敗：", e.message);
+    log("建立房間失敗：", e?.message || String(e));
   }
 });
 
-el("btnJoinRoom").addEventListener("click", async () => {
+el("btnJoinRoom")?.addEventListener("click", async () => {
   try {
     const code = el("joinCode").value;
     const name = el("pName").value.trim();
@@ -246,11 +238,17 @@ el("btnJoinRoom").addEventListener("click", async () => {
     renderRoomInfo();
 
     const player = await getOrCreatePlayer(room.id, name, job, personality);
-    log("加入房間成功：", { room_code: room.room_code, player_id: player.id, turn_order: player.turn_order });
+
+    // ✅ 一定要在成功拿到 player 後才 log（避免假成功）
+    log("加入房間成功：", {
+      room_code: room.room_code,
+      player_id: player.id,
+      turn_order: player.turn_order
+    });
 
     await subscribePlayers(room.id);
   } catch (e) {
-    log("加入房間失敗：", e.message);
+    log("加入房間失敗：", e?.message || String(e));
   }
 });
 
@@ -260,6 +258,6 @@ el("btnJoinRoom").addEventListener("click", async () => {
     await ensureSignedIn();
     log("初始化完成：已匿名登入");
   } catch (e) {
-    log("初始化失敗：", e.message);
+    log("初始化失敗：", e?.message || String(e));
   }
 })();
