@@ -137,6 +137,7 @@ if (e3) {
   console.error("join_room_player failed:", e3);
   throw new Error(`加入失敗：${e3.message}`);
 }
+
 return inserted;
 
 }
