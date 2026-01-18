@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>White Lotus Online (MVP)</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>White Lotus Online（MVP）</h1>
+
+    <section class="card">
+      <h2>登入狀態</h2>
+      <div class="row">
+        <div id="authStatus">尚未登入</div>
+        <button id="btnSignIn">匿名登入</button>
+      </div>
+      <div class="hint">＊你已在 Supabase 開啟 Anonymous sign-in 才能用</div>
+    </section>
+
+    <section class="grid">
+      <section class="card">
+        <h2>建立房間</h2>
+        <div class="row">
+          <label>死者牌目標張數</label>
+          <input id="createTargetDead" type="number" min="1" max="99" value="8" />
+        </div>
+        <button id="btnCreateRoom">建立房間</button>
+        <div class="hint">建立後會自動生成 6 碼房號</div>
+      </section>
+
+      <section class="card">
+        <h2>加入房間</h2>
+        <div class="row">
+          <label>房號（6 碼）</label>
+          <input id="joinCode" type="text" maxlength="8" placeholder="例如: A3K9QW" />
+        </div>
+
+        <hr />
+
+        <div class="row">
+          <label>名字</label>
+          <input id="pName" type="text" maxlength="20" placeholder="你的暱稱" />
+        </div>
+        <div class="row">
+          <label>職業</label>
+          <input id="pJob" type="text" maxlength="30" placeholder="例如：老師/工程師…" />
+        </div>
+        <div class="row">
+          <label>個性</label>
+          <input id="pPersonality" type="text" maxlength="40" placeholder="例如：冷靜/直球/嘴硬…" />
+        </div>
+
+        <button id="btnJoinRoom">加入</button>
+        <div class="hint">加入後會看到房間玩家列表（即時同步）</div>
+      </section>
+    </section>
+
+    <section class="card">
+      <h2>房間資訊</h2>
+      <div id="roomInfo" class="mono">尚未進入房間</div>
+    </section>
+
+    <section class="card">
+      <h2>玩家列表（即時同步）</h2>
+      <div id="playersList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <h2>系統訊息</h2>
+      <pre id="log" class="log"></pre>
+    </section>
+  </main>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
