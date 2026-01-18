@@ -126,7 +126,7 @@ if (!sessionUser?.id) {
   sessionUser = user; // 若 sessionUser 是 const，就改用 currentUser 變數
 }
   const { data: inserted, error: e3 } = await supabase.rpc("join_room_player", {
-  log("加入房間成功：" + JSON.stringify({
+
   p_room_id: roomId,
   p_user_id: sessionUser.id,
   p_name: name,
