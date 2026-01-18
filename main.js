@@ -125,21 +125,16 @@ if (!sessionUser?.id) {
   if (!user) throw new Error("匿名登入尚未完成，請重整後再試");
   sessionUser = user; // 若 sessionUser 是 const，就改用 currentUser 變數
 }
-  const { data: inserted, error: e3 } = await supabase
-  .from("players")
-  .insert({
-    room_id: roomId,
-    user_id: sessionUser.id,
-    name,
-    job,
-    personality,
-    turn_order: nextOrder
-  })
-  .select("*")
-  .single();
+  const { data: inserted, error: e3 } = await supabase.rpc("join_room_player", {
+  p_room_id: roomId,
+  p_user_id: sessionUser.id,
+  p_name: name,
+  p_job: job,
+  p_personality: personality
+});
 
 if (e3) {
-  console.error("INSERT players failed:", e3);
+  console.error("join_room_player failed:", e3);
   throw new Error(`加入失敗：${e3.message}`);
 }
 return inserted;
