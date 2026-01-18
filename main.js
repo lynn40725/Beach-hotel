@@ -117,17 +117,14 @@ async function getOrCreatePlayer(roomId, name, job, personality) {
   if (nextOrder >= 6) {
     throw new Error("房間已滿（最多 6 人）");
   }
-
-  const { data: inserted, error: e3 } = await supabase
-    .from("players")
-
 if (!sessionUser?.id) {
   const { data: { user }, error } = await supabase.auth.getUser();
   if (error) throw error;
   if (!user) throw new Error("匿名登入尚未完成，請重整後再試");
   sessionUser = user; // 若 sessionUser 是 const，就改用 currentUser 變數
 }
-    
+  const { data: inserted, error: e3 } = await supabase
+    .from("players")    
     .insert({
       room_id: roomId,
       user_id: sessionUser.id,
