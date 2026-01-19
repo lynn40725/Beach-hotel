@@ -1,46 +1,34 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-/** === 你自己的專案資訊 === */
-const SUPABASE_URL = "https://cebtdwvnfnhlbpbqcirt.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_9omkoai3Xn4MYhDxTurlqw_ps0QeM0f";
-
+const SUPABASE_URL = "https://cebtdwvnfnhlbpbqcirt.supabase.co" ;
+const SUPABASE_ANON_KEY = "sb_publishable_9omkoai3Xn4MYhDxTurlqw_ps0QeM0f" ;
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+console.log("SUPABASE_URL =", SUPABASE_URL);
 const el = (id) => document.getElementById(id);
 const logEl = el("log");
 
 function log(...args) {
-  const msg = args
-    .map((a) => (typeof a === "string" ? a : JSON.stringify(a, null, 2)))
-    .join(" ");
+  const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a, null, 2))).join(" ");
   logEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}\n` + logEl.textContent;
-}
-
-function escapeHtml(s) {
-  return String(s ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
 }
 
 let sessionUser = null;
 let currentRoom = null;
 let playersChannel = null;
+let roomsChannel = null;
 
-/** ---------- Auth ---------- */
+// ---------- Auth ----------
 async function ensureSignedIn() {
-  const { data: got } = await supabase.auth.getUser();
-  if (got?.user) {
-    sessionUser = got.user;
+  const { data } = await supabase.auth.getUser();
+  if (data?.user) {
+    sessionUser = data.user;
     el("authStatus").textContent = `已登入（匿名）: ${sessionUser.id.slice(0, 8)}…`;
     return sessionUser;
   }
 
-  const { data, error } = await supabase.auth.signInAnonymously();
+  const { data: signInData, error } = await supabase.auth.signInAnonymously();
   if (error) throw error;
-  sessionUser = data.user;
+  sessionUser = signInData.user;
   el("authStatus").textContent = `已登入（匿名）: ${sessionUser.id.slice(0, 8)}…`;
   return sessionUser;
 }
@@ -54,18 +42,14 @@ el("btnSignIn").addEventListener("click", async () => {
   }
 });
 
-/** ---------- Room ---------- */
+// ---------- Room ----------
 async function createRoom(targetDeadCards) {
   await ensureSignedIn();
-
-  const n = Number(targetDeadCards);
-  if (!Number.isFinite(n) || n <= 0) throw new Error("死者牌目標張數必須是正整數");
-
   const { data, error } = await supabase
     .from("rooms")
     .insert({
-      // room_code 由 DB trigger 產生（6 碼）
-      target_dead_cards: n,
+      // room_code 由 trigger 自動產生
+      target_dead_cards: targetDeadCards,
       created_by: sessionUser.id
     })
     .select("*")
@@ -77,16 +61,15 @@ async function createRoom(targetDeadCards) {
 
 async function findRoomByCode(code) {
   await ensureSignedIn();
-  const roomCode = String(code ?? "").trim().toUpperCase();
-
-  if (!roomCode) throw new Error("請輸入房號");
-  if (roomCode.length !== 6) throw new Error("房號必須是 6 碼");
+  const roomCode = code.trim().toUpperCase();
 
   const { data, error } = await supabase
     .from("rooms")
     .select("*")
     .eq("room_code", roomCode)
     .maybeSingle();
+  
+console.log("findRoomByCode:", { roomCode, data, error });
 
   if (error) throw error;
   if (!data) throw new Error("找不到此房號");
@@ -106,17 +89,37 @@ function renderRoomInfo() {
     `current_round=${currentRoom.current_round}\n`;
 }
 
-/** ---------- Players ---------- */
+// Realtime subscribe room row (讓多開/無痕也會即時更新回合狀態)
+async function subscribeRoom(roomId) {
+  if (roomsChannel) {
+    await supabase.removeChannel(roomsChannel);
+    roomsChannel = null;
+  }
+
+  roomsChannel = supabase
+    .channel(`room:${roomId}`)
+    .on(
+      "postgres_changes",
+      { event: "UPDATE", schema: "public", table: "rooms", filter: `id=eq.${roomId}` },
+      (payload) => {
+        currentRoom = payload.new;
+        renderRoomInfo();
+        log("rooms realtime update:", {
+          status: currentRoom.status,
+          current_round: currentRoom.current_round
+        });
+      }
+    )
+    .subscribe((status) => {
+      log(`rooms realtime: ${status}`);
+    });
+}
+
+// ---------- Players ----------
 async function getOrCreatePlayer(roomId, name, job, personality) {
   await ensureSignedIn();
 
-  const pName = String(name ?? "").trim();
-  const pJob = String(job ?? "").trim();
-  const pPer = String(personality ?? "").trim();
-
-  if (!pName) throw new Error("請輸入名字");
-
-  // 先看自己是否已在房間（避免重複加入）
+  // 先看自己是否已在房間裡（避免重複加入）
   const { data: existing, error: e1 } = await supabase
     .from("players")
     .select("*")
@@ -127,24 +130,54 @@ async function getOrCreatePlayer(roomId, name, job, personality) {
   if (e1) throw e1;
   if (existing) return existing;
 
-  // ✅ 不在前端算 turn_order，交給 DB function（可做 lock + max + 6人上限）
-  const { data: inserted, error: e2 } = await supabase.rpc("join_room_player", {
-    p_room_id: roomId,
-    p_user_id: sessionUser.id,
-    p_name: pName,
-    p_job: pJob,
-    p_personality: pPer
+  // turn_order / 人數上限 6 的判斷，交給 RPC 在 DB 端原子處理（避免多人同時加入時重複）
+if (!sessionUser?.id) {
+  const { data: { user }, error } = await supabase.auth.getUser();
+  if (error) throw error;
+  if (!user) throw new Error("匿名登入尚未完成，請重整後再試");
+  sessionUser = user; // 若 sessionUser 是 const，就改用 currentUser 變數
+}
+  const { data: inserted, error: e3 } = await supabase.rpc("join_room_player", {
+
+  p_room_id: roomId,
+  p_user_id: sessionUser.id,
+  p_name: name,
+  p_job: job,
+  p_personality: personality
+});
+
+if (e3) {
+  console.error("join_room_player failed:", e3);
+  throw new Error(`加入失敗：${e3.message}`);
+}
+
+return inserted;
+
+}
+
+// ---------- Round ----------
+async function startRound() {
+  await ensureSignedIn();
+  if (!currentRoom?.id) throw new Error("請先建立或加入房間");
+
+  const { data, error } = await supabase.rpc("start_round", {
+    p_room_id: currentRoom.id
   });
 
-  if (e2) throw new Error(e2.message || "加入房間失敗");
-  return inserted;
+  if (error) throw error;
+  // RPC 回傳 rooms row（或至少 room_id/current_round），這裡直接以回傳更新畫面
+  if (data) {
+    currentRoom = data;
+    renderRoomInfo();
+  }
+  log("開始回合成功");
 }
 
 function renderPlayers(players) {
   const wrap = el("playersList");
   wrap.innerHTML = "";
 
-  if (!players || !players.length) {
+  if (!players.length) {
     wrap.textContent = "目前沒有玩家";
     return;
   }
@@ -165,9 +198,17 @@ function renderPlayers(players) {
   }
 }
 
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 // Realtime subscribe players of room
 async function subscribePlayers(roomId) {
-  // 移除舊訂閱
   if (playersChannel) {
     await supabase.removeChannel(playersChannel);
     playersChannel = null;
@@ -189,6 +230,7 @@ async function subscribePlayers(roomId) {
       "postgres_changes",
       { event: "*", schema: "public", table: "players", filter: `room_id=eq.${roomId}` },
       async () => {
+        // 有變更就重新拉一次（最穩、也最簡單）
         const { data: latest, error: e } = await supabase
           .from("players")
           .select("*")
@@ -198,10 +240,12 @@ async function subscribePlayers(roomId) {
         if (!e) renderPlayers(latest);
       }
     )
-    .subscribe((status) => log(`players realtime: ${status}`));
+    .subscribe((status) => {
+      log(`players realtime: ${status}`);
+    });
 }
 
-/** ---------- UI wiring ---------- */
+// ---------- UI wiring ----------
 el("btnCreateRoom").addEventListener("click", async () => {
   try {
     const targetDeadCards = Number(el("createTargetDead").value || 8);
@@ -210,7 +254,9 @@ el("btnCreateRoom").addEventListener("click", async () => {
     renderRoomInfo();
     log("建立房間成功，房號：", room.room_code);
 
-    // 建房後通常會讓你直接把房號帶入右側加入欄位
+    await subscribeRoom(room.id);
+
+    // 建房後你通常會立刻加入（也可以讓它先等朋友）
     el("joinCode").value = room.room_code;
   } catch (e) {
     log("建立房間失敗：", e.message);
@@ -220,23 +266,19 @@ el("btnCreateRoom").addEventListener("click", async () => {
 el("btnJoinRoom").addEventListener("click", async () => {
   try {
     const code = el("joinCode").value;
-    const name = el("pName").value;
-    const job = el("pJob").value;
-    const personality = el("pPersonality").value;
+    const name = el("pName").value.trim();
+    const job = el("pJob").value.trim();
+    const personality = el("pPersonality").value.trim();
 
-    // 先找房（這一步會直接抓出 “找不到房號” 的問題）
+    if (!code.trim()) throw new Error("請輸入房號");
+    if (!name) throw new Error("請輸入名字");
+
     const room = await findRoomByCode(code);
     currentRoom = room;
     renderRoomInfo();
 
-    // 再加入（DB 決定 turn_order / 6人上限）
     const player = await getOrCreatePlayer(room.id, name, job, personality);
-
-    log("加入房間成功：", {
-      room_code: room.room_code,
-      player_id: player.id,
-      turn_order: player.turn_order
-    });
+    log("加入房間成功：", { room_code: room.room_code, player_id: player.id, turn_order: player.turn_order });
 
     await subscribePlayers(room.id);
   } catch (e) {
@@ -244,7 +286,18 @@ el("btnJoinRoom").addEventListener("click", async () => {
   }
 });
 
-// Auto sign-in on load
+// 開始回合
+el("btnStartRound")?.addEventListener("click", async () => {
+  try {
+    await startRound();
+  } catch (e) {
+    log("開始回合失敗：", e.message);
+  }
+});
+
+// 你需要在 HTML 放一顆按鈕：<button id="btnStartRound">開始回合</button>
+
+// ---------- Auto sign-in on load ----------
 (async function init() {
   try {
     await ensureSignedIn();
