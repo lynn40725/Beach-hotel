@@ -95,6 +95,7 @@ async function subscribeRoom(roomId) {
     await supabase.removeChannel(roomsChannel);
     roomsChannel = null;
   }
+log("subscribe rooms with roomId =", roomId);
 
   roomsChannel = supabase
     .channel(`room:${roomId}`)
